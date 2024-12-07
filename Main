@@ -1,0 +1,744 @@
+# -*- coding: utf-8 -*-
+"""Enhanced Stock Predictor with Comprehensive Improvements and Real-Time Updates
+
+This script:
+- Fetches ~1 year of historical stock data from Alpaca (1-minute bars) for multiple symbols.
+- Incorporates advanced data acquisition and preprocessing techniques.
+- Engineers a wide range of technical and fundamental features.
+- Trains a sophisticated Transformer-based model with optimized architecture.
+- Implements advanced training procedures and hyperparameter optimization.
+- Evaluates model performance using comprehensive metrics.
+- Visualizes results for in-depth analysis.
+- Provides real-time updates and progress indicators to the console.
+
+Author: Dhruv Shajikumar
+Date: 12/06/2024
+"""
+
+!pip install -q numpy pandas matplotlib scipy torch scikit-learn statsmodels optuna shap joblib alpaca-trade-api python-dotenv tqdm
+
+
+import os
+import time
+import copy
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import stats
+import torch
+import torch.nn as nn
+from torch.utils.data import TensorDataset, DataLoader
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import warnings
+from statsmodels.graphics.tsaplots import plot_acf
+import optuna
+import shap
+import joblib
+import logging
+import alpaca_trade_api as tradeapi
+from datetime import datetime, timedelta
+from torch.cuda.amp import GradScaler, autocast  # For mixed precision training
+from tqdm import tqdm  # For progress bars
+
+# ===============================
+# Phase 1: Data Acquisition and Preprocessing
+# ===============================
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()  # Ensure logs are output to the console
+    ]
+)
+warnings.filterwarnings('ignore')
+
+# Load Alpaca API Keys from environment variables
+APCA_API_KEY_ID = ("PKBB0A9FZ5ZWOHWGNVDW")
+APCA_API_SECRET_KEY = ("ZYRHK9nYOUn5YZDQfQP6CVCLaaB1oEHqjI30pjRD")
+APCA_API_BASE_URL = "https://paper-api.alpaca.markets"
+
+# List of symbols to predict
+symbols = ["AAPL", "GOOG", "MSFT"]  # Modify as needed
+
+sequence_length = 50
+train_ratio = 0.8
+
+# Set end_date to December 6, 2024 (last weekday the markets were open)
+end_date = datetime(2024, 12, 6)
+start_date = end_date - timedelta(days=365)
+
+# ===============================
+# Phase 1a: Technical Indicator Functions
+# ===============================
+
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).fillna(0)
+    loss = (-delta.where(delta < 0, 0)).fillna(0)
+    avg_gain = gain.rolling(window=period, min_periods=period).mean()
+    avg_loss = loss.rolling(window=period, min_periods=period).mean()
+    rs = avg_gain / (avg_loss + 1e-10)  # Avoid division by zero
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_macd(series, span_short=12, span_long=26, span_signal=9):
+    ema_short = series.ewm(span=span_short, adjust=False).mean()
+    ema_long = series.ewm(span=span_long, adjust=False).mean()
+    macd = ema_short - ema_long
+    signal = macd.ewm(span=span_signal, adjust=False).mean()
+    histogram = macd - signal
+    return macd, signal, histogram
+
+def calculate_atr(high, low, close, period=14):
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(window=period, min_periods=period).mean()
+    return atr
+
+def calculate_bollinger_bands(series, window=20, num_std=2):
+    rolling_mean = series.rolling(window=window, min_periods=window).mean()
+    rolling_std = series.rolling(window=window, min_periods=window).std()
+    upper_band = rolling_mean + (rolling_std * num_std)
+    lower_band = rolling_mean - (rolling_std * num_std)
+    return upper_band, rolling_mean, lower_band
+
+def calculate_ema(series, span=20):
+    return series.ewm(span=span, adjust=False).mean()
+
+def calculate_stochastic_oscillator(high, low, close, window=14):
+    low_min = low.rolling(window=window, min_periods=window).min()
+    high_max = high.rolling(window=window, min_periods=window).max()
+    stochastic = 100 * ((close - low_min) / (high_max - low_min + 1e-10))  # Avoid division by zero
+    return stochastic
+
+def calculate_obv(close, volume):
+    obv = (np.sign(close.diff()) * volume).fillna(0).cumsum()
+    return obv
+
+# ===============================
+# Phase 1b: Data Fetching
+# ===============================
+
+def fetch_data_from_alpaca(symbol, start, end):
+    try:
+        logging.info(f"Fetching data for {symbol} from {start.date()} to {end.date()}...")
+        api = tradeapi.REST(
+            key_id=APCA_API_KEY_ID,
+            secret_key=APCA_API_SECRET_KEY,
+            base_url=APCA_API_BASE_URL
+        )
+        account = api.get_account()
+        logging.info(f"Alpaca Account Status for {symbol}: {account.status}")
+
+        # Fetching data from the SIP feed to avoid subscription issues
+        bars = api.get_bars(
+            symbol,
+            tradeapi.rest.TimeFrame.Minute,
+            start.isoformat() + 'Z',
+            end.isoformat() + 'Z',
+            limit=100000,
+            feed='sip'
+        )
+
+        df = bars.df
+        if df.empty:
+            logging.warning(f"No data fetched for {symbol}.")
+            return pd.DataFrame()
+        
+        # Since we requested only one symbol, 'symbol' column should not be present.
+        # No filtering by symbol needed.
+
+        df.sort_index(inplace=True)
+        df.rename(columns={
+            'open': 'Open',
+            'high': 'High',
+            'low': 'Low',
+            'close': 'Close',
+            'volume': 'Volume'
+        }, inplace=True)
+
+        logging.info(f"Data fetched successfully for {symbol}!")
+        logging.info(df.head())
+        return df
+
+    except Exception as e:
+        logging.error(f"Error fetching data for {symbol}: {e}")
+        return pd.DataFrame()  # Return empty DataFrame on error
+
+# ===============================
+# Phase 1c: Preprocessing and Feature Engineering
+# ===============================
+
+def preprocess_data(df):
+    logging.info("\nInitial Data Head:")
+    logging.info(df.head())
+
+    logging.info("\nInitial Data Columns:")
+    logging.info(df.columns)
+
+    # Ensure we have a Date column
+    if 'Date' not in df.columns:
+        df.reset_index(inplace=True)
+        df.rename(columns={'timestamp': 'Date'}, inplace=True)
+        df.sort_values('Date', inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
+    logging.info("\nData after sorting:")
+    logging.info(df.head())
+
+    logging.info("\nData Columns after rename/sort:")
+    logging.info(df.columns)
+
+    return df
+
+def engineer_features(data):
+    logging.info("\nCreating lag features...")
+    for lag in range(1, 8):
+        data[f'Close_lag_{lag}'] = data['Close'].shift(lag)
+        logging.debug(f"Created feature: Close_lag_{lag}")
+
+    logging.info("\nHandling missing values...")
+    data.fillna(method='bfill', inplace=True)
+    data.dropna(inplace=True)
+
+    logging.info("\nCalculating technical indicators...")
+    data['RSI'] = calculate_rsi(data['Close'], period=14)
+    macd, macd_signal, macd_hist = calculate_macd(data['Close'])
+    data['MACD'] = macd
+    data['MACD_signal'] = macd_signal
+    data['MACD_histogram'] = macd_hist
+    data['ATR'] = calculate_atr(data['High'], data['Low'], data['Close'], period=14)
+    data['BB_upper'], data['BB_middle'], data['BB_lower'] = calculate_bollinger_bands(data['Close'], window=20, num_std=2)
+    data['EMA_20'] = calculate_ema(data['Close'], span=20)
+    data['EMA_50'] = calculate_ema(data['Close'], span=50)
+    data['Stochastic'] = calculate_stochastic_oscillator(data['High'], data['Low'], data['Close'], window=14)
+    data['OBV'] = calculate_obv(data['Close'], data['Volume'])
+
+    logging.info("\nHandling missing values after indicator calculations...")
+    data.fillna(method='bfill', inplace=True)
+    data.dropna(inplace=True)
+
+    logging.info("\nProcessed Data Head:")
+    logging.info(data.head())
+
+    return data
+
+def normalize_features(data, features, scaler_path=None):
+    logging.info("\nInitializing RobustScaler...")
+    scaler = RobustScaler()
+    logging.info("Normalizing features...")
+    data[features] = scaler.fit_transform(data[features])
+    
+    if scaler_path:
+        joblib.dump(scaler, scaler_path)
+        logging.info(f"Scaler saved as '{scaler_path}'.")
+    
+    logging.info("\nData with Normalized Features Head:")
+    logging.info(data.head())
+    return data, scaler
+
+def train_test_split_custom(data, features, seq_length, train_ratio=0.8):
+    logging.info("\nSplitting data into training and testing sets...")
+    total_sequences = len(data) - seq_length
+    train_size = int(total_sequences * train_ratio)
+    if total_sequences - train_size < 1:
+        logging.error("Not enough data for testing.")
+        exit(1)
+
+    train_data = data.iloc[:train_size + seq_length]
+    test_data = data.iloc[train_size:]
+    X_train = train_data[features].values
+    y_train = train_data['Close'].values
+    X_test = test_data[features].values
+    y_test = test_data['Close'].values
+
+    return X_train, y_train, X_test, y_test, test_data
+
+def create_sequences(features, targets, seq_length):
+    X, y = [], []
+    for i in tqdm(range(len(features) - seq_length), desc="Creating sequences", leave=False):
+        X.append(features[i:i+seq_length])
+        y.append(targets[i+seq_length])
+    return np.array(X), np.array(y)
+
+def create_dataloaders(X_train_seq, y_train_seq, X_test_seq, y_test_seq, batch_size=32):
+    logging.info("\nConverting data to PyTorch tensors...")
+    X_train_tensor = torch.tensor(X_train_seq, dtype=torch.float32)
+    y_train_tensor = torch.tensor(y_train_seq, dtype=torch.float32)
+    X_test_tensor = torch.tensor(X_test_seq, dtype=torch.float32)
+    y_test_tensor = torch.tensor(y_test_seq, dtype=torch.float32)
+
+    logging.info("Creating TensorDatasets...")
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+
+    logging.info("Creating DataLoaders...")
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+
+    logging.info("Datasets and DataLoaders created successfully!")
+    return train_loader, test_loader
+
+# ===============================
+# Phase 2: Advanced Feature Engineering
+# ===============================
+
+# Feature engineering is integrated within the 'engineer_features' function above.
+# For further enhancements, you can add more indicators or external data sources as needed.
+
+# ===============================
+# Phase 3: Model Architecture Optimization
+# ===============================
+
+class VarianceSkewKurtosisLoss(nn.Module):
+    def __init__(self, alpha=1.0, beta=1.0, gamma=1.0, delta=1.0):
+        super(VarianceSkewKurtosisLoss, self).__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.delta = delta
+
+    def forward(self, y_pred, y_true):
+        mse_loss = nn.MSELoss()(y_pred, y_true)
+        var_true = torch.var(y_true, unbiased=False)
+        var_pred = torch.var(y_pred, unbiased=False)
+        skew_true = torch.mean((y_true - torch.mean(y_true))**3) / (torch.std(y_true, unbiased=False)**3 + 1e-8)
+        skew_pred = torch.mean((y_pred - torch.mean(y_pred))**3) / (torch.std(y_pred, unbiased=False)**3 + 1e-8)
+        kurt_true = torch.mean((y_true - torch.mean(y_true))**4) / (torch.std(y_true, unbiased=False)**4 + 1e-8)
+        kurt_pred = torch.mean((y_pred - torch.mean(y_pred))**4) / (torch.std(y_pred, unbiased=False)**4 + 1e-8)
+
+        variance_penalty = torch.abs(var_true - var_pred)
+        skewness_penalty = torch.abs(skew_true - skew_pred)
+        kurtosis_penalty = torch.abs(kurt_true - kurt_pred)
+
+        total_loss = (self.alpha * mse_loss +
+                      self.beta * variance_penalty +
+                      self.gamma * skewness_penalty +
+                      self.delta * kurtosis_penalty)
+        return total_loss
+
+class StockPredictorTransformer(nn.Module):
+    def __init__(self, input_size, sequence_length, num_layers=2, nhead=4, d_model=128, dim_feedforward=256, dropout=0.2):
+        super(StockPredictorTransformer, self).__init__()
+        self.sequence_length = sequence_length
+        self.input_layer = nn.Linear(input_size, d_model)
+        self.positional_encoding = nn.Parameter(torch.zeros(1, sequence_length, d_model))
+
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.decoder = nn.Linear(d_model, 1)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, src):
+        src = self.input_layer(src)
+        src += self.positional_encoding[:, :src.size(1), :]
+        src = src.permute(1, 0, 2)  # Transformer expects input shape (S, N, E)
+        seq_len = src.size(0)
+        mask = nn.Transformer.generate_square_subsequent_mask(seq_len).to(src.device)
+        output = self.transformer_encoder(src, mask=mask)
+        output = output[-1, :, :]  # Take the output of the last time step
+        output = self.dropout(output)
+        output = self.decoder(output)
+        return output.squeeze()
+
+# ===============================
+# Phase 4: Training Procedures and Optimization
+# ===============================
+
+def train_model(model, loss_fn, optimizer, train_loader, test_loader, device, num_epochs=200):
+    scaler = GradScaler()  # For mixed precision training
+    logging.info("\nStarting training with mixed precision...")
+    for epoch in range(num_epochs):
+        model.train()
+        total_loss = 0
+        for x_batch, y_batch in train_loader:
+            x_batch = x_batch.to(device, non_blocking=True)
+            y_batch = y_batch.to(device, non_blocking=True)
+
+            optimizer.zero_grad()
+            with autocast():
+                y_pred = model(x_batch)
+                loss = loss_fn(y_pred, y_batch)
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            total_loss += loss.item()
+        avg_loss = total_loss / len(train_loader)
+
+        # Validation
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for x_val, y_val in test_loader:
+                x_val = x_val.to(device, non_blocking=True)
+                y_val = y_val.to(device, non_blocking=True)
+                with autocast():
+                    y_pred = model(x_val)
+                    loss = loss_fn(y_pred, y_val)
+                val_loss += loss.item()
+        avg_val_loss = val_loss / len(test_loader)
+
+        # Logging
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            logging.info(f'Epoch {epoch+1}/{num_epochs}, Training Loss: {avg_loss:.6f}, Validation Loss: {avg_val_loss:.6f}')
+
+        # Optional: Early Stopping (not implemented here but recommended)
+
+    logging.info("Training completed with mixed precision.")
+    return model
+
+# ===============================
+# Phase 5: Hyperparameter Optimization
+# ===============================
+
+def optimize_hyperparameters(X_train_seq, y_train_seq, X_test_seq, y_test_seq, device, sequence_length, study_name="stock_predictor_study", n_trials=100):
+    def objective(trial):
+        # Suggest hyperparameters
+        nhead = trial.suggest_int('nhead', 2, 16)
+        multiplier = trial.suggest_int('d_model_multiplier', 2, 32)
+        d_model = nhead * multiplier
+        dim_feedforward = trial.suggest_int('dim_feedforward', 2 * d_model, 8 * d_model)
+        num_layers = trial.suggest_int('num_layers', 2, 6)
+        dropout = trial.suggest_float('dropout', 0.1, 0.5)
+        lr = trial.suggest_loguniform('lr', 1e-5, 1e-2)
+
+        # Initialize model
+        model = StockPredictorTransformer(
+            input_size=X_train_seq.shape[2],
+            sequence_length=sequence_length,
+            num_layers=num_layers,
+            nhead=nhead,
+            d_model=d_model,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout
+        ).to(device)
+
+        loss_fn = VarianceSkewKurtosisLoss(alpha=1.0, beta=1.0, gamma=1.0, delta=1.0)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+
+        # Create DataLoaders
+        train_dataset = TensorDataset(torch.tensor(X_train_seq, dtype=torch.float32),
+                                      torch.tensor(y_train_seq, dtype=torch.float32))
+        test_dataset = TensorDataset(torch.tensor(X_test_seq, dtype=torch.float32),
+                                     torch.tensor(y_test_seq, dtype=torch.float32))
+
+        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=0, pin_memory=True)
+        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=0, pin_memory=True)
+
+        # Train the model
+        model = train_model(model, loss_fn, optimizer, train_loader, test_loader, device, num_epochs=50)
+
+        # Evaluate the model
+        model.eval()
+        predictions = []
+        actuals = []
+        with torch.no_grad():
+            for x_batch, y_batch in test_loader:
+                x_batch = x_batch.to(device, non_blocking=True)
+                y_batch = y_batch.to(device, non_blocking=True)
+                y_pred = model(x_batch)
+                predictions.extend(y_pred.cpu().numpy())
+                actuals.extend(y_batch.cpu().numpy())
+
+        # Calculate MAPE
+        actuals = np.array(actuals)
+        predictions = np.array(predictions)
+        mape = np.mean(np.abs((actuals - predictions) / (actuals + 1e-8))) * 100  # Avoid division by zero
+
+        # Optional: Log trial details
+        trial.report(mape, step=0)
+
+        # Handle pruning based on intermediate value.
+        if trial.should_prune():
+            raise optuna.exceptions.TrialPruned()
+
+        return mape  # Objective is to minimize MAPE
+
+    # Create and optimize the study
+    study = optuna.create_study(direction='minimize', study_name=study_name)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+
+    logging.info(f"Number of finished trials: {len(study.trials)}")
+    logging.info("Best trial:")
+    trial = study.best_trial
+    logging.info(f' Value (MAPE): {trial.value}')
+    logging.info(' Params: ')
+    for key, value in trial.params.items():
+        logging.info(f' {key}: {value}')
+
+    return study
+
+# ===============================
+# Phase 6: Evaluation and Visualization
+# ===============================
+
+def evaluate_model(model, test_loader, device):
+    logging.info("\nEvaluating model performance on the test set...")
+    model.eval()
+    predictions = []
+    actuals = []
+
+    with torch.no_grad():
+        for x_batch, y_batch in tqdm(test_loader, desc="Evaluating", leave=False):
+            x_batch = x_batch.to(device, non_blocking=True)
+            y_batch = y_batch.to(device, non_blocking=True)
+            y_pred = model(x_batch)
+            predictions.extend(y_pred.cpu().numpy())
+            actuals.extend(y_batch.cpu().numpy())
+
+    # Convert to numpy arrays
+    actuals = np.array(actuals)
+    predictions = np.array(predictions)
+    residuals = actuals - predictions
+
+    # Calculate metrics
+    mse = mean_squared_error(actuals, predictions)
+    mae = mean_absolute_error(actuals, predictions)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(actuals, predictions)
+    mape = np.mean(np.abs((actuals - predictions) / (actuals + 1e-8))) * 100  # Avoid division by zero
+    smape = 100 * np.mean(2 * np.abs(predictions - actuals) / (np.abs(actuals) + np.abs(predictions) + 1e-8))
+    correlation = np.corrcoef(actuals, predictions)[0, 1]
+    quantiles = np.percentile(residuals, [5, 25, 50, 75, 95])
+
+    logging.info(f'\nTest MSE: {mse:.6f}')
+    logging.info(f'Test MAE: {mae:.6f}')
+    logging.info(f'Test RMSE: {rmse:.6f}')
+    logging.info(f'Test R-Squared: {r2:.6f}')
+    logging.info(f'Test MAPE: {mape:.2f}%')
+    logging.info(f'Test sMAPE: {smape:.2f}%')
+    logging.info(f'Test Correlation Coefficient: {correlation:.6f}')
+    logging.info(f'Error Quantiles: {quantiles}')
+
+    return actuals, predictions, residuals
+
+def visualize_results(test_data, sequence_length, actuals, predictions, residuals, symbol):
+    plot_df = pd.DataFrame({
+        'Date': test_data['Date'].iloc[sequence_length:].reset_index(drop=True),
+        'Actual_Close': actuals,
+        'Predicted_Close': predictions
+    })
+
+    # Actual vs Predicted Prices
+    plt.figure(figsize=(14,7))
+    plt.plot(plot_df['Date'], plot_df['Actual_Close'], label='Actual Prices', color='blue')
+    plt.plot(plot_df['Date'], plot_df['Predicted_Close'], label='Predicted Prices', color='red')
+    plt.legend()
+    plt.title(f'Actual vs Predicted Stock Prices for {symbol}')
+    plt.xlabel('Date')
+    plt.ylabel('Price ($)')
+    plt.tight_layout()
+    plt.show()
+
+    # Residuals over Time
+    plt.figure(figsize=(14, 7))
+    plt.scatter(plot_df['Date'], residuals, alpha=0.5)
+    plt.axhline(y=0, color='r', linestyle='--')
+    plt.title(f'Residuals over Time for {symbol}')
+    plt.xlabel('Date')
+    plt.ylabel('Residuals')
+    plt.tight_layout()
+    plt.show()
+
+    # Residual Distribution
+    plt.figure(figsize=(10, 6))
+    plt.hist(residuals, bins=30, edgecolor='black', alpha=0.7)
+    plt.title(f'Residual Distribution for {symbol}')
+    plt.xlabel('Residual')
+    plt.ylabel('Frequency')
+    plt.tight_layout()
+    plt.show()
+
+    # Rolling Prediction Error
+    rolling_window = 20
+    rolling_error = pd.Series(residuals).rolling(window=rolling_window).mean()
+
+    plt.figure(figsize=(14, 7))
+    plt.plot(plot_df['Date'], rolling_error, label=f'Rolling Error ({rolling_window} Minutes)', color='purple')
+    plt.axhline(y=0, color='r', linestyle='--', label='Zero Error Line')
+    plt.title(f'Rolling Prediction Error for {symbol}')
+    plt.xlabel('Date')
+    plt.ylabel('Error')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    # Autocorrelation of Residuals
+    plot_acf(residuals, lags=40, alpha=0.05)
+    plt.title(f'Autocorrelation of Residuals for {symbol}')
+    plt.tight_layout()
+    plt.show()
+
+    # Cumulative Returns
+    actual_cum_returns = np.cumsum(actuals)
+    predicted_cum_returns = np.cumsum(predictions)
+
+    plt.figure(figsize=(14, 7))
+    plt.plot(plot_df['Date'], actual_cum_returns, label='Actual Cumulative Returns', color='blue')
+    plt.plot(plot_df['Date'], predicted_cum_returns, label='Predicted Cumulative Returns', color='green')
+    plt.title(f'Actual vs Predicted Cumulative Returns for {symbol}')
+    plt.xlabel('Date')
+    plt.ylabel('Cumulative Returns')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+# ===============================
+# Phase 6: Model Explainability and Interpretability
+# ===============================
+
+def explain_model(model, X_explain, device, features, symbol):
+    logging.info("\nStarting SHAP explainability...")
+    model.eval()
+    X_explain_subset = X_explain[:100]
+    X_explain_tensor = torch.tensor(X_explain_subset, dtype=torch.float32).to(device, non_blocking=True)
+
+    def model_predict(input):
+        model.eval()
+        with torch.no_grad():
+            inp = torch.tensor(input, dtype=torch.float32, device=device)
+            return model(inp).cpu().numpy()
+
+    # Initialize SHAP explainer
+    try:
+        explainer = shap.Explainer(model_predict, X_explain_subset)
+        shap_values = explainer(X_explain_subset)
+
+        # SHAP Summary Plot
+        shap.summary_plot(shap_values, X_explain_subset, feature_names=features, show=False)
+        plt.title(f'SHAP Summary Plot for {symbol}')
+        plt.tight_layout()
+        plt.show()
+
+        # SHAP Waterfall Plot for first prediction
+        shap.plots.waterfall(shap_values[0], max_display=10, show=False)
+        plt.title(f'SHAP Waterfall Plot for {symbol}')
+        plt.tight_layout()
+        plt.show()
+    except Exception as e:
+        logging.error(f"Error generating SHAP plots for {symbol}: {e}")
+
+    return shap_values
+
+# ===============================
+# Phase 7: Main Execution Function
+# ===============================
+
+def main():
+    for symbol in symbols:
+        logging.info(f"\n{'='*60}\nProcessing symbol: {symbol}\n{'='*60}")
+
+        # ===============================
+        # Phase 1: Data Acquisition and Preprocessing
+        # ===============================
+        # Fetch Data
+        data_raw = fetch_data_from_alpaca(symbol, start_date, end_date)
+        if data_raw.empty:
+            logging.warning(f"No data fetched for {symbol}. Skipping...")
+            continue
+        data_raw = preprocess_data(data_raw)
+        data_raw = engineer_features(data_raw)
+
+        # Define features
+        features = [
+            'Open', 'High', 'Low', 'Close', 'Volume',
+            'RSI', 'MACD', 'MACD_signal', 'MACD_histogram', 'ATR',
+            'BB_upper', 'BB_middle', 'BB_lower', 'EMA_20', 'EMA_50', 'Stochastic', 'OBV'
+        ] + [f'Close_lag_{lag}' for lag in range(1, 8)]
+
+        # Keep a copy before normalization for ATR usage:
+        data_for_atr = data_raw.copy()
+
+        # Normalize Features
+        scaler_path = f'scaler_{symbol}.joblib'
+        data, scaler = normalize_features(data_raw, features, scaler_path=scaler_path)
+
+        # Split Data
+        X_train, y_train, X_test, y_test, test_data = train_test_split_custom(data, features, sequence_length, train_ratio=train_ratio)
+
+        logging.info("\nCreating sequences...")
+        X_train_seq, y_train_seq = create_sequences(X_train, y_train, sequence_length)
+        X_test_seq, y_test_seq = create_sequences(X_test, y_test, sequence_length)
+        logging.info(f"\nTraining Sequences Shape: {X_train_seq.shape}, {y_train_seq.shape}")
+        logging.info(f"Testing Sequences Shape: {X_test_seq.shape}, {y_test_seq.shape}")
+
+        # Create DataLoaders
+        train_loader, test_loader = create_dataloaders(X_train_seq, y_train_seq, X_test_seq, y_test_seq, batch_size=32)
+
+        # ===============================
+        # Phase 3: Model Architecture Optimization
+        # ===============================
+        # Device Selection
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            logging.info(f"Using CUDA device: {torch.cuda.get_device_name(0)}")
+        else:
+            device = torch.device("cpu")
+            logging.info("CUDA device not found. Using CPU.")
+
+        # Initialize and train model
+        input_size = X_train_seq.shape[2]
+        logging.info("\nInitializing the model...")
+        model = StockPredictorTransformer(
+            input_size=input_size,
+            sequence_length=sequence_length,
+            num_layers=2,
+            nhead=4,
+            d_model=128,
+            dim_feedforward=256,
+            dropout=0.2
+        ).to(device)
+
+        train_loss_fn = VarianceSkewKurtosisLoss(alpha=1.0, beta=1.0, gamma=1.0, delta=1.0)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+
+        logging.info("\nStarting Phase 4: Training the model...")
+        model = train_model(model, train_loss_fn, optimizer, train_loader, test_loader, device, num_epochs=200)
+        logging.info("Completed Phase 4: Training the model.")
+
+        # ===============================
+        # Phase 6: Evaluation and Visualization
+        # ===============================
+        logging.info("\nStarting Phase 6: Evaluating the model...")
+        actuals, predictions, residuals = evaluate_model(model, test_loader, device)
+        logging.info("Completed Phase 6: Evaluating the model.")
+
+        logging.info("\nStarting Phase 6: Visualizing results...")
+        visualize_results(test_data, sequence_length, actuals, predictions, residuals, symbol)
+        logging.info("Completed Phase 6: Visualization.")
+
+        # ===============================
+        # Phase 5: Hyperparameter Optimization
+        # ===============================
+        logging.info("\nStarting Phase 5: Hyperparameter Optimization with Optuna...")
+        study = optimize_hyperparameters(X_train_seq, y_train_seq, X_test_seq, y_test_seq, device, sequence_length, study_name=f"stock_predictor_study_{symbol}", n_trials=100)
+        logging.info("Completed Phase 5: Hyperparameter Optimization.")
+
+        # ===============================
+        # Phase 6: Model Explainability and Interpretability
+        # ===============================
+        logging.info("\nStarting Phase 6: Model Explainability and Interpretability...")
+        X_explain = X_test_seq[:100]
+        shap_values = explain_model(model, X_explain, device, features, symbol)
+        logging.info("Completed Phase 6: Model Explainability.")
+
+        # ===============================
+        # Saving the Model
+        # ===============================
+        model_path = f'stock_predictor_transformer_{symbol}.pth'
+        torch.save(model.state_dict(), model_path)
+        logging.info(f"Model saved to {model_path}")
+
+        logging.info(f"\n{'='*60}\nCompleted processing for {symbol}.\n{'='*60}")
+
+    logging.info("All symbols processed successfully.")
+
+if __name__ == "__main__":
+    main()
