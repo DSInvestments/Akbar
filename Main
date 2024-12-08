@@ -56,8 +56,8 @@ logging.basicConfig(
 warnings.filterwarnings('ignore')
 
 # Load Alpaca API Keys from environment variables
-APCA_API_KEY_ID = ("PKBB0A9FZ5ZWOHWGNVDW")
-APCA_API_SECRET_KEY = ("ZYRHK9nYOUn5YZDQfQP6CVCLaaB1oEHqjI30pjRD")
+APCA_API_KEY_ID = ("PUT IN YOUR API KEY")
+APCA_API_SECRET_KEY = ("PUT IN YOUR API KEY")
 APCA_API_BASE_URL = "https://paper-api.alpaca.markets"
 
 # List of symbols to predict
