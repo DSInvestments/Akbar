@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Peak-to-Peak Ranking – Extracurricular & Verified</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600&display=swap" rel="stylesheet">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --primary-color: #00274c;
+      --secondary-color: #d3d3d3;
+      --accent-color: #fdb515;
+      --bg-color: #f4f7f9;
+      --card-bg: #fff;
+      --font-family: 'Montserrat', sans-serif;
+      --dark-bg: #121212;
+      --dark-card-bg: #1e1e1e;
+      --dark-text: #f4f4f4;
+    }
+    /* Global Reset */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: var(--font-family);
+      background: var(--bg-color);
+      color: #333;
+      line-height: 1.6;
+      transition: background 0.3s ease, color 0.3s ease;
+    }
+    /* Dark Mode */
+    body.dark-mode {
+      background: var(--dark-bg);
+      color: var(--dark-text);
+    }
+    body.dark-mode .card {
+      background: var(--dark-card-bg);
+    }
+    header {
+      background: linear-gradient(135deg, var(--primary-color), #005288);
+      color: #fff;
+      padding: 15px 20px;
+      position: relative;
+    }
+    /* Navigation Bar */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .nav .brand {
+      font-size: 1.8em;
+      font-weight: 600;
+    }
+    .nav .menu {
+      display: flex;
+      gap: 15px;
+    }
+    .nav button {
+      background: var(--accent-color);
+      border: none;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .nav button:hover {
+      opacity: 0.9;
+    }
+    /* Mobile menu toggle */
+    .menu-toggle {
+      display: none;
+      background: none;
+      border: none;
+      font-size: 1.5em;
+      color: #fff;
+    }
+    @media (max-width: 600px) {
+      .nav .menu {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+      }
+      .nav .menu.active {
+        display: flex;
+      }
+      .menu-toggle {
+        display: block;
+      }
+    }
+    .container {
+      max-width: 1200px;
+      margin: 30px auto;
+      padding: 0 20px;
+    }
+    /* Card */
+    .card {
+      background: var(--card-bg);
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      padding: 20px;
+      margin-bottom: 30px;
+      transition: background 0.3s ease;
+    }
+    h2 {
+      margin-bottom: 15px;
+      color: var(--primary-color);
+    }
+    /* Form Styles */
+    form .form-group {
+      margin-bottom: 15px;
+    }
+    form label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 600;
+    }
+    form input[type="text"],
+    form input[type="email"],
+    form input[type="number"],
+    form input[type="password"],
+    form input[type="file"],
+    form select {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid var(--secondary-color);
+      border-radius: 4px;
+    }
+    form input[type="file"] {
+      padding: 3px;
+    }
+    form button {
+      background: var(--primary-color);
+      color: #fff;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 4px;
+      font-size: 1em;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+    form button:hover {
+      background: #004269;
+    }
+    .error {
+      color: red;
+      font-size: 0.9em;
+      margin-top: 5px;
+    }
+    /* Tabs for Filtering */
+    .tabs {
+      display: flex;
+      margin-bottom: 20px;
+      border-bottom: 2px solid var(--secondary-color);
+    }
+    .tab {
+      padding: 10px 15px;
+      margin-right: 15px;
+      cursor: pointer;
+      transition: color 0.3s ease;
+      font-weight: 600;
+      color: #666;
+    }
+    .tab.active {
+      color: var(--primary-color);
+      border-bottom: 3px solid var(--accent-color);
+    }
+    /* Search Bar */
+    .search-bar {
+      margin-bottom: 15px;
+    }
+    .search-bar input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid var(--secondary-color);
+      border-radius: 4px;
+    }
+    /* Table Styles */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+    }
+    table thead {
+      background: var(--secondary-color);
+    }
+    table th,
+    table td {
+      padding: 10px;
+      text-align: left;
+      border: 1px solid #ddd;
+      font-size: 0.9em;
+    }
+    table tbody tr:hover {
+      background: #f1f1f1;
+    }
+    /* Action Buttons */
+    .action-btn {
+      margin-right: 5px;
+      padding: 4px 8px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8em;
+    }
+    .edit-btn {
+      background: #4CAF50;
+      color: #fff;
+    }
+    .delete-btn {
+      background: #f44336;
+      color: #fff;
+    }
+    /* Chart Container */
+    .chart-container {
+      background: var(--card-bg);
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 30px;
+    }
+    .chart-toggle {
+      margin-bottom: 10px;
+    }
+    /* Modal Styles */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background: rgba(0, 0, 0, 0.6);
+    }
+    .modal-content {
+      background: var(--card-bg);
+      margin: 10% auto;
+      padding: 20px;
+      border-radius: 8px;
+      max-width: 600px;
+      position: relative;
+    }
+    .modal-close {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      cursor: pointer;
+      font-size: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <!-- Navigation Bar -->
+  <header>
+    <div class="nav">
+      <div class="brand">Peak-to-Peak Ranking</div>
+      <button class="menu-toggle" onclick="toggleMenu()">☰</button>
+      <div class="menu" id="navMenu">
+        <button onclick="showLoginModal()">Login</button>
+        <button onclick="toggleDarkMode()">Dark Mode</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal">
+      <div class="modal-content">
+        <span class="modal-close" onclick="closeLoginModal()">&times;</span>
+        <h2>Login</h2>
+        <form id="loginForm">
+          <div class="form-group">
+            <label for="loginEmail">Email</label>
+            <input type="email" id="loginEmail" required placeholder="user@example.com">
+          </div>
+          <div class="form-group">
+            <label for="loginPassword">Password</label>
+            <input type="password" id="loginPassword" required placeholder="Password">
+          </div>
+          <button type="submit">Login</button>
+          <div id="loginError" class="error"></div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Profile Submission Form Card -->
+    <div class="card" id="mainContent" style="display:none;">
+      <h2>Submit Your Profile</h2>
+      <form id="profileForm">
+        <div class="form-group">
+          <label for="name">Full Name</label>
+          <input type="text" id="name" required placeholder="John Doe">
+        </div>
+        <div class="form-group">
+          <label for="email">Email (for verification)</label>
+          <input type="email" id="email" required placeholder="john@example.com">
+        </div>
+        <div class="form-group">
+          <label for="field">Field of Interest</label>
+          <select id="field" required>
+            <option value="">Select Field</option>
+            <option value="Business">Business</option>
+            <option value="Med">Medicine</option>
+            <option value="CS">Computer Science</option>
+            <option value="Engineering">Engineering</option>
+            <option value="Law/Political">Law/Political Science</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="extracurricular">Extracurricular Score (0-10)</label>
+          <input type="number" step="0.1" id="extracurricular" required placeholder="8">
+        </div>
+        <div class="form-group">
+          <label for="acceptanceLetter">Acceptance Letter URL (if available)</label>
+          <input type="text" id="acceptanceLetter" placeholder="https://...">
+        </div>
+        <div class="form-group">
+          <label for="linkedin">LinkedIn Profile URL</label>
+          <input type="text" id="linkedin" placeholder="https://linkedin.com/in/...">
+        </div>
+        <div class="form-group">
+          <label for="certificates">Certificates/Awards URLs (comma separated)</label>
+          <input type="text" id="certificates" placeholder="https://..., https://...">
+        </div>
+        <div class="form-group">
+          <label for="verification">Verification Screenshot (Google Classroom homepage)</label>
+          <input type="file" id="verification" accept="image/*" required>
+        </div>
+        <button type="submit">Submit Profile</button>
+        <div id="formError" class="error"></div>
+      </form>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="search-bar" id="searchContainer" style="display:none;">
+      <input type="text" id="searchInput" placeholder="Search profiles by name...">
+    </div>
+
+    <!-- Rankings Table Card -->
+    <div class="card" id="tableCard" style="display:none;">
+      <h2>Rankings</h2>
+      <div class="tabs">
+        <div class="tab active" data-field="All" onclick="filterByField('All')">All</div>
+        <div class="tab" data-field="Business" onclick="filterByField('Business')">Business</div>
+        <div class="tab" data-field="Med" onclick="filterByField('Med')">Medicine</div>
+        <div class="tab" data-field="CS" onclick="filterByField('CS')">Computer Science</div>
+        <div class="tab" data-field="Engineering" onclick="filterByField('Engineering')">Engineering</div>
+        <div class="tab" data-field="Law/Political" onclick="filterByField('Law/Political')">Law/Political</div>
+      </div>
+      <table id="rankingTable">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Name</th>
+            <th>Field</th>
+            <th>Extracurricular</th>
+            <th>Total Score</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Dynamic rows -->
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Chart Container -->
+    <div class="chart-container" id="chartContainer" style="display:none;">
+      <div class="chart-toggle">
+        <button onclick="toggleChartType()">Toggle Chart Type (Current: <span id="chartTypeLabel">Bar</span>)</button>
+      </div>
+      <canvas id="trendsChart"></canvas>
+    </div>
+
+    <!-- Profile Details Modal -->
+    <div id="detailsModal" class="modal">
+      <div class="modal-content">
+        <span class="modal-close" onclick="closeDetailsModal()">&times;</span>
+        <h2>Profile Details</h2>
+        <div id="profileDetailsContent"></div>
+      </div>
+    </div>
+
+    <!-- Edit Profile Modal -->
+    <div id="editModal" class="modal">
+      <div class="modal-content">
+        <span class="modal-close" onclick="closeEditModal()">&times;</span>
+        <h2>Edit Profile</h2>
+        <form id="editForm">
+          <!-- Same fields as submission -->
+          <input type="hidden" id="editIndex">
+          <div class="form-group">
+            <label for="editName">Full Name</label>
+            <input type="text" id="editName" required>
+          </div>
+          <div class="form-group">
+            <label for="editEmail">Email</label>
+            <input type="email" id="editEmail" required>
+          </div>
+          <div class="form-group">
+            <label for="editField">Field of Interest</label>
+            <select id="editField" required>
+              <option value="">Select Field</option>
+              <option value="Business">Business</option>
+              <option value="Med">Medicine</option>
+              <option value="CS">Computer Science</option>
+              <option value="Engineering">Engineering</option>
+              <option value="Law/Political">Law/Political Science</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="editExtracurricular">Extracurricular Score</label>
+            <input type="number" step="0.1" id="editExtracurricular" required>
+          </div>
+          <div class="form-group">
+            <label for="editAcceptanceLetter">Acceptance Letter URL</label>
+            <input type="text" id="editAcceptanceLetter">
+          </div>
+          <div class="form-group">
+            <label for="editLinkedin">LinkedIn Profile URL</label>
+            <input type="text" id="editLinkedin">
+          </div>
+          <div class="form-group">
+            <label for="editCertificates">Certificates/Awards URLs</label>
+            <input type="text" id="editCertificates">
+          </div>
+          <button type="submit">Save Changes</button>
+          <div id="editError" class="error"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Global variables
+    let profiles = [];
+    let chartType = 'bar';
+    let trendsChart;
+
+    // Dummy user for login simulation
+    const dummyUser = { email: "user@example.com", password: "password" };
+
+    // Toggle mobile menu
+    function toggleMenu() {
+      document.getElementById("navMenu").classList.toggle("active");
+    }
+
+    // Dark mode toggle
+    function toggleDarkMode() {
+      document.body.classList.toggle("dark-mode");
+    }
+
+    // Login Modal functions
+    function showLoginModal() {
+      document.getElementById("loginModal").style.display = "block";
+    }
+    function closeLoginModal() {
+      document.getElementById("loginModal").style.display = "none";
+    }
+    document.getElementById("loginForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const email = document.getElementById("loginEmail").value;
+      const password = document.getElementById("loginPassword").value;
+      if(email === dummyUser.email && password === dummyUser.password) {
+        closeLoginModal();
+        // Show main content once logged in
+        document.getElementById("mainContent").style.display = "block";
+        document.getElementById("searchContainer").style.display = "block";
+        document.getElementById("tableCard").style.display = "block";
+        document.getElementById("chartContainer").style.display = "block";
+      } else {
+        document.getElementById("loginError").textContent = "Invalid credentials.";
+      }
+    });
+
+    // Validate form (advanced validation can be added here)
+    function validateForm(form) {
+      let valid = true;
+      let errorMsg = "";
+      // Check required fields
+      form.querySelectorAll("input[required], select[required]").forEach(input => {
+        if (!input.value) {
+          valid = false;
+          errorMsg = "Please fill in all required fields.";
+        }
+      });
+      return { valid, errorMsg };
+    }
+
+    // Compute score based solely on extracurricular plus a bonus if acceptanceLetter exists.
+    function computeScore(extracurricular, acceptanceLetter) {
+      const bonus = acceptanceLetter.trim() !== "" ? 10 : 0;
+      return parseFloat(extracurricular) + bonus;
+    }
+
+    // Render profiles table (includes search filtering)
+    function renderTable(filter = 'All') {
+      const tbody = document.querySelector("#rankingTable tbody");
+      tbody.innerHTML = '';
+      // Apply field filter and search filter
+      let searchText = document.getElementById("searchInput").value.toLowerCase();
+      let filtered = profiles.filter(p => {
+        return (filter === 'All' || p.field === filter) &&
+               p.name.toLowerCase().includes(searchText);
+      });
+      filtered.sort((a, b) => b.score - a.score);
+      filtered.forEach((profile, index) => {
+        const tr = document.createElement("tr");
+        tr.addEventListener("click", function(e) {
+          // Prevent triggering when clicking on edit/delete buttons
+          if(e.target.tagName.toLowerCase() !== "button") {
+            showDetailsModal(profile);
+          }
+        });
+        tr.innerHTML = `
+          <td>${index + 1}</td>
+          <td>${profile.name}</td>
+          <td>${profile.field}</td>
+          <td>${profile.extracurricular}</td>
+          <td>${profile.score.toFixed(2)}</td>
+          <td>
+            <button class="action-btn edit-btn" onclick="editProfile(${index}); event.stopPropagation();">Edit</button>
+            <button class="action-btn delete-btn" onclick="deleteProfile(${index}); event.stopPropagation();">Delete</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Update chart with average scores by field
+    function updateChart() {
+      const fields = ["Business", "Med", "CS", "Engineering", "Law/Political"];
+      let avgScores = fields.map(field => {
+        const arr = profiles.filter(p => p.field === field);
+        return arr.length ? arr.reduce((sum, p) => sum + p.score, 0) / arr.length : 0;
+      });
+      if(trendsChart) {
+        trendsChart.data.labels = fields;
+        trendsChart.data.datasets[0].data = avgScores;
+        trendsChart.update();
+      }
+    }
+
+    // Initialize Chart.js chart
+    function initChart() {
+      const ctx = document.getElementById('trendsChart').getContext('2d');
+      trendsChart = new Chart(ctx, {
+        type: chartType,
+        data: {
+          labels: ["Business", "Med", "CS", "Engineering", "Law/Political"],
+          datasets: [{
+            label: 'Average Score',
+            data: [0, 0, 0, 0, 0],
+            backgroundColor: 'rgba(0,39,76,0.7)'
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: (chartType === 'bar' ? { y: { beginAtZero: true } } : {})
+        }
+      });
+    }
+    initChart();
+
+    // Toggle between bar and pie chart
+    function toggleChartType() {
+      chartType = (chartType === 'bar') ? 'pie' : 'bar';
+      document.getElementById("chartTypeLabel").textContent = chartType.charAt(0).toUpperCase() + chartType.slice(1);
+      trendsChart.destroy();
+      initChart();
+      updateChart();
+    }
+
+    // Handle profile form submission
+    document.getElementById("profileForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const validation = validateForm(this);
+      if(!validation.valid) {
+        document.getElementById("formError").textContent = validation.errorMsg;
+        return;
+      }
+      // Gather form values
+      const name = document.getElementById("name").value;
+      const email = document.getElementById("email").value;
+      const field = document.getElementById("field").value;
+      const extracurricular = parseFloat(document.getElementById("extracurricular").value);
+      const acceptanceLetter = document.getElementById("acceptanceLetter").value;
+      const linkedin = document.getElementById("linkedin").value;
+      const certificates = document.getElementById("certificates").value.split(",").map(item => item.trim()).filter(item => item);
+      // Verification file (for demo, we just check that a file is chosen)
+      const verificationFile = document.getElementById("verification").files[0];
+      if(!verificationFile) {
+        document.getElementById("formError").textContent = "Please upload a verification screenshot.";
+        return;
+      }
+      const score = computeScore(extracurricular, acceptanceLetter);
+      const profile = { name, email, field, extracurricular, acceptanceLetter, linkedin, certificates, score, verificationFileName: verificationFile.name };
+      profiles.push(profile);
+      this.reset();
+      renderTable(document.querySelector(".tab.active").dataset.field);
+      updateChart();
+    });
+
+    // Search filtering
+    document.getElementById("searchInput").addEventListener("input", function() {
+      renderTable(document.querySelector(".tab.active").dataset.field);
+    });
+
+    // Field filter
+    function filterByField(field) {
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      document.querySelector(`.tab[data-field="${field}"]`).classList.add("active");
+      renderTable(field);
+    }
+
+    // Delete profile
+    function deleteProfile(index) {
+      if(confirm("Are you sure you want to delete this profile?")) {
+        profiles.splice(index, 1);
+        renderTable(document.querySelector(".tab.active").dataset.field);
+        updateChart();
+      }
+    }
+
+    // Edit profile
+    function editProfile(index) {
+      const profile = profiles[index];
+      document.getElementById("editIndex").value = index;
+      document.getElementById("editName").value = profile.name;
+      document.getElementById("editEmail").value = profile.email;
+      document.getElementById("editField").value = profile.field;
+      document.getElementById("editExtracurricular").value = profile.extracurricular;
+      document.getElementById("editAcceptanceLetter").value = profile.acceptanceLetter;
+      document.getElementById("editLinkedin").value = profile.linkedin;
+      document.getElementById("editCertificates").value = profile.certificates.join(", ");
+      document.getElementById("editModal").style.display = "block";
+    }
+    document.getElementById("editForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const index = document.getElementById("editIndex").value;
+      const validation = validateForm(this);
+      if(!validation.valid) {
+        document.getElementById("editError").textContent = validation.errorMsg;
+        return;
+      }
+      const name = document.getElementById("editName").value;
+      const email = document.getElementById("editEmail").value;
+      const field = document.getElementById("editField").value;
+      const extracurricular = parseFloat(document.getElementById("editExtracurricular").value);
+      const acceptanceLetter = document.getElementById("editAcceptanceLetter").value;
+      const linkedin = document.getElementById("editLinkedin").value;
+      const certificates = document.getElementById("editCertificates").value.split(",").map(item => item.trim()).filter(item => item);
+      const score = computeScore(extracurricular, acceptanceLetter);
+      profiles[index] = { name, email, field, extracurricular, acceptanceLetter, linkedin, certificates, score };
+      closeEditModal();
+      renderTable(document.querySelector(".tab.active").dataset.field);
+      updateChart();
+    });
+    function closeEditModal() {
+      document.getElementById("editModal").style.display = "none";
+    }
+
+    // Profile details modal
+    function showDetailsModal(profile) {
+      const content = document.getElementById("profileDetailsContent");
+      content.innerHTML = `
+        <p><strong>Name:</strong> ${profile.name}</p>
+        <p><strong>Email:</strong> ${profile.email}</p>
+        <p><strong>Field:</strong> ${profile.field}</p>
+        <p><strong>Extracurricular Score:</strong> ${profile.extracurricular}</p>
+        <p><strong>Total Score:</strong> ${profile.score.toFixed(2)}</p>
+        <p><strong>Acceptance Letter:</strong> ${profile.acceptanceLetter || "N/A"}</p>
+        <p><strong>LinkedIn:</strong> ${profile.linkedin || "N/A"}</p>
+        <p><strong>Certificates:</strong> ${profile.certificates.length ? profile.certificates.join(", ") : "N/A"}</p>
+        <p><strong>Verification File:</strong> ${profile.verificationFileName || "N/A"}</p>
+      `;
+      document.getElementById("detailsModal").style.display = "block";
+    }
+    function closeDetailsModal() {
+      document.getElementById("detailsModal").style.display = "none";
+    }
+  </script>
+</body>
+</html>
